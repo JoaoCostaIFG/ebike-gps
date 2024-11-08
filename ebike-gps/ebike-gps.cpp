@@ -1,19 +1,12 @@
+#include "ebike-conf.h"
+
 #include <Arduino.h>
 
-#include "utilities.h"
-
-#define TINY_GSM_RX_BUFFER 1024 // Set RX buffer to 1Kb
-
-// Set serial for debug console (to the Serial Monitor, default speed 115200)
-#define SerialMon Serial
-
-// Define the serial console for debug prints, if needed
-#define TINY_GSM_DEBUG SerialMon
-
-// See all AT commands, if wanted
-// #define DUMP_AT_COMMANDS
-
+#include "modem_utilities.h"
 #include <TinyGsmClient.h>
+#include <TinyGPSPlus.h>
+
+#include "ebike-log.h"
 
 #ifdef DUMP_AT_COMMANDS // if enabled it requires the streamDebugger lib
 #include <StreamDebugger.h>
@@ -23,20 +16,146 @@ TinyGsm modem(debugger);
 TinyGsm modem(SerialAT);
 #endif
 
-// It depends on the operator whether to set up an APN. If some operators do not
-// set up an APN, they will be rejected when registering for the network. You
-// need to ask the local operator for the specific APN.
-#define NETWORK_APN "internet"
+// Global data
+static TinyGPSPlus gps;
+static uint32_t check_interval = 0;
 
-void setup() {
+static void wait_modem_start()
+{
+  EBIKE_DBG("Starting modem...");
+  delay(3000);
+  for (unsigned retry = 0; !modem.testAT(1000); ++retry)
+  {
+    EBIKE_DBG(".");
+    if (retry > 10)
+    {
+      digitalWrite(BOARD_PWRKEY_PIN, LOW);
+      delay(100);
+      digitalWrite(BOARD_PWRKEY_PIN, HIGH);
+      delay(1000);
+      digitalWrite(BOARD_PWRKEY_PIN, LOW);
+      retry = 0;
+    }
+  }
+  EBIKE_DBG("Modem started.");
+  delay(200);
+}
+
+static int wait_sim_online()
+{
+  SimStatus sim = SIM_ERROR;
+  while (sim != SIM_READY)
+  {
+    sim = modem.getSimStatus();
+    switch (sim)
+    {
+    case SIM_READY:
+      EBIKE_DBG("SIM online.");
+      break;
+    case SIM_LOCKED:
+#ifdef SIMCARD_PIN
+      if (!modem.simUnlock(SIMCARD_PIN))
+      {
+        EBIKE_ERR("Failed to unlock SIM card");
+        return 1;
+      }
+#else
+      EBIKE_ERR("SIM locked: needs PIN.");
+      return 1;
+#endif // SIMCARD_PIN
+      break;
+    default:
+      break;
+    }
+    delay(1000);
+  }
+
+  return 0;
+}
+
+/**
+ * Check network registration status and network signal status
+ */
+static int wait_network_registration()
+{
+  EBIKE_DBG("Wait for the modem to register with the network.");
+  RegStatus status = REG_NO_RESULT;
+  while (status == REG_NO_RESULT || status == REG_SEARCHING ||
+         status == REG_UNREGISTERED)
+  {
+
+    status = modem.getRegistrationStatus();
+    switch (status)
+    {
+    case REG_UNREGISTERED:
+    case REG_SEARCHING:
+      EBIKE_DBG("Searching signal quality: ", modem.getSignalQuality());
+      delay(1000);
+      break;
+    case REG_DENIED:
+      EBIKE_ERR("Network registration was rejected, please check if the "
+                "APN is correct.");
+      return 1;
+    case REG_OK_HOME:
+      EBIKE_DBG("Online registration successful.");
+      break;
+    case REG_OK_ROAMING:
+      EBIKE_DBG(
+          "Network registration successful, currently in roaming mode.");
+      break;
+    default:
+      EBIKE_DBG("Registration Status: %d\n", status);
+      delay(1000);
+      break;
+    }
+  }
+
+  delay(1000);
+
+  String ueInfo;
+  if (modem.getSystemInformation(ueInfo))
+  {
+    EBIKE_DBG("Inquiring UE system information: ", ueInfo);
+  }
+
+  return 0;
+}
+
+static void enable_gps()
+{
+  EBIKE_DBG("Enabling GPS+GLONASS+GALILEO+SBAS+QZSS");
+  while (!modem.enableGPS(MODEM_GPS_ENABLE_GPIO))
+  {
+    EBIKE_DBG(".");
+    sleep(100);
+  }
+  EBIKE_NFO("GPS Enabled");
+  modem.setGPSBaud(MODEM_BAUDRATE);
+  // GPS+GLONASS+GALILEO+SBAS+QZSS
+  if (!modem.setGPSMode(3))
+  {
+    EBIKE_ERR("failed to set gps mode");
+  }
+  modem.configNMEASentence(1, 1, 1, 1, 1, 1);
+  modem.setGPSOutputRate(1);
+  modem.enableNMEA();
+  if (!modem.enableAGPS())
+  {
+    EBIKE_ERR("enable GPS acceleration");
+  }
+}
+
+void setup()
+{
   Serial.begin(115200);
+
   // Turn on DC boost to power on the modem
 #ifdef BOARD_POWERON_PIN
   pinMode(BOARD_POWERON_PIN, OUTPUT);
   digitalWrite(BOARD_POWERON_PIN, HIGH);
 #endif
 
-  // Set modem reset pin ,reset modem
+  // Set modem reset pin, reset modem
   pinMode(MODEM_RESET_PIN, OUTPUT);
   digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
   delay(100);
@@ -55,200 +174,127 @@ void setup() {
   // Set modem baud
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
 
-  Serial.println("Start modem...");
-  delay(3000);
+  wait_modem_start();
 
-  int retry = 0;
-  while (!modem.testAT(1000)) {
-    Serial.println(".");
-    if (retry++ > 10) {
-      digitalWrite(BOARD_PWRKEY_PIN, LOW);
-      delay(100);
-      digitalWrite(BOARD_PWRKEY_PIN, HIGH);
-      delay(1000);
-      digitalWrite(BOARD_PWRKEY_PIN, LOW);
-      retry = 0;
-    }
-  }
-  Serial.println();
-  delay(200);
-
-  modem.sendAT("+SIMCOMATI");
-  modem.waitResponse();
-
-  // Check if SIM card is online
-  SimStatus sim = SIM_ERROR;
-  while (sim != SIM_READY) {
-    sim = modem.getSimStatus();
-    switch (sim) {
-    case SIM_READY:
-      Serial.println("SIM card online");
-      break;
-    case SIM_LOCKED:
-      Serial.println(
-          "The SIM card is locked. Please unlock the SIM card first.");
-      // const char *SIMCARD_PIN_CODE = "123456";
-      // modem.simUnlock(SIMCARD_PIN_CODE);
-      break;
-    default:
-      break;
-    }
-    delay(1000);
+  while (wait_sim_online())
+  {
+    // TODO hang on certain failures
   }
 
-  if (!modem.setNetworkMode(MODEM_NETWORK_AUTO)) {
-    Serial.println("Set network mode failed!");
+#ifndef TINY_GSM_MODEM_SIM7672
+  if (!modem.setNetworkMode(MODEM_NETWORK_AUTO))
+  {
+    EBIKE_ERR("Set network mode failed!");
   }
+  EBIKE_DBG("Current network mode: ", modem.getNetworkModes());
+#endif
 
 #ifdef NETWORK_APN
-  Serial.printf("Set network apn : %s\n", NETWORK_APN);
+  EBIKE_DBG("Set network apn: ", NETWORK_APN);
   modem.sendAT(GF("+CGDCONT=1,\"IP\",\""), NETWORK_APN, "\"");
-  if (modem.waitResponse() != 1) {
-    Serial.println("Set network apn error !");
+  while (!modem.waitResponse())
+  {
+    // TODO hang on certain failures
+    EBIKE_ERR("Set network apn error!");
   }
 #endif
 
-  // Check network registration status and network signal status
-  int16_t sq;
-  Serial.print("Wait for the modem to register with the network.");
-  RegStatus status = REG_NO_RESULT;
-  while (status == REG_NO_RESULT || status == REG_SEARCHING ||
-         status == REG_UNREGISTERED) {
-    status = modem.getRegistrationStatus();
-    switch (status) {
-    case REG_UNREGISTERED:
-    case REG_SEARCHING:
-      sq = modem.getSignalQuality();
-      Serial.printf("[%lu] Signal Quality:%d\n", millis() / 1000, sq);
-      delay(1000);
-      break;
-    case REG_DENIED:
-      Serial.println("Network registration was rejected, please check if the "
-                     "APN is correct");
-      return;
-    case REG_OK_HOME:
-      Serial.println("Online registration successful");
-      break;
-    case REG_OK_ROAMING:
-      Serial.println(
-          "Network registration successful, currently in roaming mode");
-      break;
-    default:
-      Serial.printf("Registration Status:%d\n", status);
-      delay(1000);
-      break;
-    }
+  while (wait_network_registration())
+  {
+    // TODO hang
   }
-  Serial.println();
-
-  delay(1000);
-
-  String ueInfo;
-  if (modem.getSystemInformation(ueInfo)) {
-    Serial.print("Inquiring UE system information:");
-    Serial.println(ueInfo);
+  while (!modem.enableNetwork())
+  {
+    // TODO hang
+    EBIKE_ERR("Enable network failed!");
   }
-
-  if (!modem.enableNetwork()) {
-    Serial.println("Enable network failed!");
-  }
-
   delay(5000);
+  EBIKE_NFO("Network IP: ", modem.getLocalIP());
 
-  String ipAddress = modem.getLocalIP();
-  Serial.print("Network IP:");
-  Serial.println(ipAddress);
-
-  Serial.println("Enabling GPS/GNSS/GLONASS");
-  while (!modem.enableGPS(MODEM_GPS_ENABLE_GPIO)) {
-    Serial.print(".");
-  }
-  Serial.println();
-  Serial.println("GPS Enabled");
-
-  modem.setGPSBaud(MODEM_BAUDRATE);
-
-  Serial.println("GPS acceleration is enabled");
-  if (!modem.enableAGPS()) {
-    Serial.println(" failed !!!");
-  } else {
-    Serial.println(" success!!!");
-  }
+  enable_gps();
 }
 
-void loop() {
-  float lat2 = 0;
-  float lon2 = 0;
-  float speed2 = 0;
-  float alt2 = 0;
-  int vsat2 = 0;
-  int usat2 = 0;
-  float accuracy2 = 0;
-  int year2 = 0;
-  int month2 = 0;
-  int day2 = 0;
-  int hour2 = 0;
-  int min2 = 0;
-  int sec2 = 0;
-  uint8_t fixMode = 0;
-  for (;;) {
-    Serial.println("Requesting current GPS/GNSS/GLONASS location");
-    if (modem.getGPS(&fixMode, &lat2, &lon2, &speed2, &alt2, &vsat2, &usat2,
-                     &accuracy2, &year2, &month2, &day2, &hour2, &min2,
-                     &sec2)) {
+static void displayInfo()
+{
+  // Show full information
+  /*
+  printInt(gps.satellites.value(), gps.satellites.isValid(), 5);
+  printFloat(gps.hdop.hdop(), gps.hdop.isValid(), 6, 1);
+  printInt(gps.location.age(), gps.location.isValid(), 5);
+  printFloat(gps.altitude.meters(), gps.altitude.isValid(), 7, 2);
+  printFloat(gps.course.deg(), gps.course.isValid(), 7, 2);
+  printFloat(gps.speed.kmph(), gps.speed.isValid(), 6, 2);
+  printStr(gps.course.isValid() ? TinyGPSPlus::cardinal(gps.course.deg()) : "*** ", 6);
+  */
 
-      Serial.print("FixMode:");
-      Serial.println(fixMode);
-      Serial.print("Latitude:");
-      Serial.print(lat2, 6);
-      Serial.print("\tLongitude:");
-      Serial.println(lon2, 6);
-      Serial.print("Speed:");
-      Serial.print(speed2);
-      Serial.print("\tAltitude:");
-      Serial.println(alt2);
-      Serial.print("Visible Satellites:");
-      Serial.print(vsat2);
-      Serial.print("\tUsed Satellites:");
-      Serial.println(usat2);
-      Serial.print("Accuracy:");
-      Serial.println(accuracy2);
-
-      Serial.print("Year:");
-      Serial.print(year2);
-      Serial.print("\tMonth:");
-      Serial.print(month2);
-      Serial.print("\tDay:");
-      Serial.println(day2);
-
-      Serial.print("Hour:");
-      Serial.print(hour2);
-      Serial.print("\tMinute:");
-      Serial.print(min2);
-      Serial.print("\tSecond:");
-      Serial.println(sec2);
-      break;
-    } else {
-      Serial.println(
-          "Couldn't get GPS/GNSS/GLONASS location, retrying in 15s.");
-      delay(15000UL);
-    }
+  if (gps.location.isValid())
+  {
+    EBIKE_NFOF("Location: Lat=%.6f Lon=%.6f", gps.location.lat(), gps.location.lng());
+    EBIKE_NFO("Satelites: ", gps.satellites.value());
   }
-  Serial.println("Retrieving GPS/GNSS/GLONASS location again as a string");
-  String gps_raw = modem.getGPSraw();
-  Serial.print("GPS/GNSS Based Location String:");
-  Serial.println(gps_raw);
-  Serial.println("Disabling GPS");
+  else
+  {
+    EBIKE_NFO("Location: Unknown");
+  }
 
-  modem.disableGPS();
+  if (gps.date.isValid())
+  {
+    EBIKE_NFOF("Date: %02d/%02d/%04d", gps.date.month(), gps.date.day(), gps.date.year());
+  }
+  else
+  {
+    EBIKE_NFO("Date: Unknown");
+  }
 
-  while (1) {
-    if (SerialAT.available()) {
-      Serial.write(SerialAT.read());
+  if (gps.time.isValid())
+  {
+    EBIKE_NFOF("Time: %02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
+  }
+  else
+  {
+    EBIKE_NFO("Time: Unknown");
+  }
+  EBIKE_NFO("--------------------------------");
+}
+
+/**
+ * This custom version of delay() ensures that the gps object
+ * is being "fed".
+ */
+static void smartDelay(unsigned long ms)
+{
+  int ch = 0;
+  unsigned long start = millis();
+  do
+  {
+    while (SerialAT.available())
+    {
+      int ch = SerialAT.read();
+      // Serial.write(ch);
+      gps.encode(ch);
     }
-    if (Serial.available()) {
-      SerialAT.write(Serial.read());
+  } while (millis() - start < ms);
+}
+
+void loop()
+{
+  displayInfo();
+
+  if (millis() > check_interval)
+  {
+    if (modem.isEnableGPS() == false)
+    {
+      EBIKE_DBG("Restart GPS!");
+      modem.enableGPS();
+      delay(1000);
     }
-    delay(1);
+    check_interval = millis() + 1000;
+  }
+
+  smartDelay(1000);
+
+  if (millis() > 30000 && gps.charsProcessed() < 10)
+  {
+    Serial.println(F("No GPS data received: check wiring"));
   }
 }
