@@ -15,7 +15,7 @@ StreamDebugger debugger(SerialAT, SerialMon);
 std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(debugger);
 #else
 std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
-#endif
+#endif // DUMP_AT_COMMANDS 
 
 // Global data
 static EBikeGPS gps(modem);
