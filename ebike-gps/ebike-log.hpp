@@ -1,6 +1,6 @@
 #pragma once
 
-#define EBIKE_LOG_HD Serial.printf("[%u] ", millis() / 1000)
+#define EBIKE_LOG_HD Serial.printf("[%lu] ", millis() / 1000)
 
 template <typename T>
 void ebike_va_print(T t)
