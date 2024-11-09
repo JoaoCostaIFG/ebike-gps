@@ -23,7 +23,32 @@ private:
     std::shared_ptr<TinyGsm> modem;
     TinyGPSPlus gps;
 
-    // double speed = 0; // m/s
+    double lat_value = 0;
+    double lon_value = 0;
+    uint32_t satellites_value = 0;
+
+    double speed = 0;    // m/s
+    double altitude = 0; // m
+
+    uint8_t day_value;
+    uint8_t month_value;
+    uint16_t year_value;
+
+    uint8_t hour_value;
+    uint8_t minute_value;
+    uint8_t second_value;
+
+    void consume()
+    {
+        while (SerialAT.available())
+        {
+            int ch = SerialAT.read();
+#ifdef DUMP_AT_COMMANDS
+            Serial.write(ch);
+#endif // DUMP_AT_COMMANDS
+            gps.encode(ch);
+        }
+    }
 
 public:
     EBikeGPS(std::shared_ptr<TinyGsm> modem)
@@ -34,59 +59,60 @@ public:
 
     double lat()
     {
-        return gps.location.lat();
+        return this->lat_value;
     }
     double lon()
     {
-        return gps.location.lng();
+        return this->lon_value;
     }
 
     uint32_t satellites()
     {
-        return gps.satellites.value();
+        return this->satellites_value;
     }
 
     double speed_kmph()
     {
-        return gps.speed.kmph();
-    }
-    double speed_mph()
-    {
-        return gps.speed.mph();
+        return this->speed * 3.6;
     }
     double speed_mps()
     {
-        return gps.speed.mps();
+        return this->speed;
     }
-    double speed_knots()
+
+    double altitude_m()
     {
-        return gps.speed.knots();
+        return this->altitude;
+    }
+    double altitude_km()
+    {
+        return this->altitude / 1000;
     }
 
     uint8_t day()
     {
-        return gps.date.day();
+        return this->day_value;
     }
     uint8_t month()
     {
-        return gps.date.month();
+        return this->month_value;
     }
     uint16_t year()
     {
-        return gps.date.year();
+        return this->year_value;
     }
 
     uint8_t hour()
     {
-        return gps.time.hour();
+        return this->hour_value;
     }
     uint8_t minute()
     {
-        return gps.time.minute();
+        return this->minute_value;
     }
     uint8_t second()
     {
-        return gps.time.second();
+        return this->second_value;
     }
 
     void enable(uint8_t mode, enum GPS_RATE rate)
@@ -133,14 +159,42 @@ public:
             modem->enableGPS();
         }
 
+        this->consume();
+
+        if (gps.location.isUpdated())
+        {
+            this->lat_value = gps.location.lat();
+            this->lon_value = gps.location.lng();
+        }
+        if (gps.satellites.isUpdated())
+        {
+            this->satellites_value = gps.satellites.value();
+        }
+        if (gps.speed.isUpdated())
+        {
+            this->speed = gps.speed.mps();
+        }
+        if (gps.altitude.isUpdated())
+        {
+            gps.altitude.meters();
+        }
+        if (gps.date.isUpdated())
+        {
+            this->day_value = gps.date.day();
+            this->month_value = gps.date.month();
+            this->year_value = gps.date.year();
+        }
+        if (gps.time.isUpdated())
+        {
+            this->hour_value = gps.time.hour();
+            this->minute_value = gps.time.minute();
+            this->second_value = gps.time.second();
+        }
+
+        // wait remaining requested time
         do
         {
-            while (SerialAT.available())
-            {
-                int ch = SerialAT.read();
-                // Serial.write(ch);
-                gps.encode(ch);
-            }
+            this->consume();
         } while (millis() - start < ms);
     }
 
@@ -150,7 +204,8 @@ public:
         EBIKE_NFO("Satelites: ", this->satellites());
         EBIKE_NFOF("Date: %04u-%02u-%02u", this->year(), this->month(), this->day());
         EBIKE_NFOF("Time: %02u:%02u:%02u", this->hour(), this->minute(), this->second());
-        EBIKE_NFOF("Speed: %.2f", gps.speed.kmph());
+        EBIKE_NFOF("Speed (km/h): %.2f", this->speed_kmph());
+        EBIKE_NFOF("Altitude (m): %.2f", this->altitude_m());
         EBIKE_NFO("--------------------------------");
     }
 };
