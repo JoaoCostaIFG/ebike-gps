@@ -133,27 +133,6 @@ static int wait_network_registration()
   return 0;
 }
 
-static void gsm_location()
-{
-  // You need to wait for the network to be activated before you can use the LBS function.
-  // By default, the network is automatically activated after the modem is started.
-  float lat = 0;
-  float lon = 0;
-  float accuracy = 0;
-  int year = 0;
-  int month = 0;
-  int day = 0;
-  int hour = 0;
-  int min = 0;
-  int sec = 0;
-
-  while (!modem->getGsmLocation(&lat, &lon, &accuracy, &year, &month, &day, &hour,
-                                &min, &sec))
-  {
-    EBIKE_DBG("Couldn't get GSM location, retrying...");
-  }
-}
-
 void setup()
 {
   Serial.begin(115200);
@@ -213,13 +192,11 @@ void setup()
   EBIKE_NFO("Network IP: ", modem->getLocalIP());
 
   gps.enable(3, GPS_5HZ);
+  gps.bootstapWithGsm();
 }
 
 void loop()
 {
-  // String gsm_location = modem->getGsmLocation();
-  // EBIKE_DBG(gsm_location);
-
   gps.display();
-  gps.delay(1000UL);
+  gps.delay(3000UL);
 }

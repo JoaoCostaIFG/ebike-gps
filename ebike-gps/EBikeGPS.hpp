@@ -27,8 +27,7 @@ private:
     double lon_value = 0;
     uint32_t satellites_value = 0;
 
-    double speed = 0;    // m/s
-    double altitude = 0; // m
+    double speed = 0; // m/s
 
     uint8_t day_value;
     uint8_t month_value;
@@ -78,15 +77,6 @@ public:
     double speed_mps()
     {
         return this->speed;
-    }
-
-    double altitude_m()
-    {
-        return this->altitude;
-    }
-    double altitude_km()
-    {
-        return this->altitude / 1000;
     }
 
     uint8_t day()
@@ -139,6 +129,34 @@ public:
         }
     }
 
+    void bootstapWithGsm()
+    {
+        float lat = 0;
+        float lon = 0;
+        float accuracy = 0;
+        int year = 0;
+        int month = 0;
+        int day = 0;
+        int hour = 0;
+        int min = 0;
+        int sec = 0;
+        EBIKE_DBG("Bootstraping location with GSM.");
+        while (!modem->getGsmLocation(&lat, &lon, &accuracy, &year, &month, &day, &hour,
+                                      &min, &sec))
+        {
+            EBIKE_DBG("Couldn't get GSM location, retrying...");
+        }
+
+        this->lat_value = (double)lat;
+        this->lon_value = (double)lon;
+        this->year_value = (uint16_t)year;
+        this->month_value = (uint8_t)month;
+        this->day_value = (uint8_t)day;
+        this->hour_value = (uint8_t)hour;
+        this->minute_value = (uint8_t)min;
+        this->second_value = (uint8_t)sec;
+    }
+
     /**
      * This custom version of delay() ensures that the gps object
      * is being "fed".
@@ -163,8 +181,11 @@ public:
 
         if (gps.location.isUpdated())
         {
-            this->lat_value = gps.location.lat();
-            this->lon_value = gps.location.lng();
+            if (gps.location.isValid())
+            {
+                this->lat_value = gps.location.lat();
+                this->lon_value = gps.location.lng();
+            }
         }
         if (gps.satellites.isUpdated())
         {
@@ -173,10 +194,6 @@ public:
         if (gps.speed.isUpdated())
         {
             this->speed = gps.speed.mps();
-        }
-        if (gps.altitude.isUpdated())
-        {
-            gps.altitude.meters();
         }
         if (gps.date.isUpdated())
         {
@@ -200,12 +217,12 @@ public:
 
     void display()
     {
-        EBIKE_NFOF("Location: Lat=%.6f Lon=%.6f", this->lat(), this->lon());
+        // EBIKE_NFOF("Location (Lat,Lon): %.8f,%.8f\nhttps://www.google.com/maps/search/%.8f,%.8f", this->lat(), this->lon(), this->lat(), this->lon());
+        EBIKE_NFOF("Location (Lat,Lon): %.8f,%.8f", this->lat(), this->lon());
         EBIKE_NFO("Satelites: ", this->satellites());
         EBIKE_NFOF("Date: %04u-%02u-%02u", this->year(), this->month(), this->day());
         EBIKE_NFOF("Time: %02u:%02u:%02u", this->hour(), this->minute(), this->second());
         EBIKE_NFOF("Speed (km/h): %.2f", this->speed_kmph());
-        EBIKE_NFOF("Altitude (m): %.2f", this->altitude_m());
         EBIKE_NFO("--------------------------------");
     }
 };
