@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ebike-conf-priv.h"
+
 #define EBIKE_DEBUG_BUILD
 
 // See all AT commands

@@ -15,7 +15,7 @@ StreamDebugger debugger(SerialAT, SerialMon);
 std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(debugger);
 #else
 std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
-#endif // DUMP_AT_COMMANDS 
+#endif // DUMP_AT_COMMANDS
 
 // Global data
 static EBikeGPS gps(modem);
@@ -188,15 +188,16 @@ void setup()
     // TODO hang
     EBIKE_ERR("Enable network failed!");
   }
+  modem->https_begin();
   delay(5000);
   EBIKE_NFO("Network IP: ", modem->getLocalIP());
 
-  gps.enable(3, GPS_5HZ);
+  gps.enable(3, GPS_1HZ);
   gps.bootstapWithGsm();
 }
 
 void loop()
 {
-  gps.display();
-  gps.delay(3000UL);
+  // gps.display();
+  // gps.delay(3000UL);
 }
