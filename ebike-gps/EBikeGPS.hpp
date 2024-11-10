@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <utility>
 
 #include "ebike-conf.h"
 #include "modem_utilities.h"
@@ -9,6 +10,9 @@
 #include <TinyGPSPlus.h>
 
 #include "ebike-log.hpp"
+#include "ebike-wifi.hpp"
+
+#define GOOGLE_GEOLOCATION_API_URL "https://www.googleapis.com/geolocation/v1/geolocate?key="
 
 enum GPS_RATE
 {
@@ -47,6 +51,55 @@ private:
 #endif // DUMP_AT_COMMANDS
             gps.encode(ch);
         }
+    }
+
+    int queryGoogleForLocation(std::pair<double, double> &coords)
+    {
+        String wifis = getSurroundingWiFiJson();
+
+        if (!modem->https_set_url(GOOGLE_GEOLOCATION_API_URL MAPS_API_KEY))
+        {
+            EBIKE_ERR("Failed to set URL");
+            return 1;
+        }
+        modem->https_add_header("Connection", "keep-alive");
+        modem->https_set_accept_type("application/json");
+        modem->https_set_user_agent("TinyGSM/A7670");
+        String post_body = "{\"considerIP\":false,\"wifiAccessPoints\":" + wifis + "}";
+
+        int httpCode = modem->https_post(post_body);
+        if (httpCode != 200)
+        {
+            EBIKE_ERR("HTTP post failed ! error code = ", httpCode);
+            return 1;
+        }
+
+        String body = modem->https_body();
+        EBIKE_DBG("HTTP body : ", body);
+        int idx = body.indexOf("\"lat\":");
+        if (idx != -1)
+        {
+            String tmp = body.substring(idx + 6);
+            coords.first = tmp.toDouble();
+        }
+        else
+        {
+            EBIKE_ERR("Failed to get latitude from Google Geo Location.");
+            return 2;
+        }
+        idx = body.indexOf("\"lng\":");
+        if (idx != -1)
+        {
+            String tmp = body.substring(idx + 6);
+            coords.second = tmp.toDouble();
+        }
+        else
+        {
+            EBIKE_ERR("Failed to get longitude from Google Geo Location.");
+            return 3;
+        }
+
+        return 0;
     }
 
 public:
