@@ -22,18 +22,11 @@ static String getSmsSender(const String &line)
     return "";
 }
 
-static void deleteSMSByIndex(std::shared_ptr<TinyGsm> modem, int index)
+bool deleteSMSByIndex(std::shared_ptr<TinyGsm> modem, int index)
 {
-    EBIKE_NFO("Deleting SMS at index: ", index);
+    EBIKE_DBG("Deleting SMS at index: ", index);
     modem->sendAT("+CMGD=" + String(index));
-    if (!modem->waitResponse())
-    {
-        EBIKE_ERR("Failed to delete SMS.");
-    }
-    else
-    {
-        EBIKE_NFO("SMS deleted successfully.");
-    }
+    return modem->waitResponse();
 }
 
 SMS readSms(std::shared_ptr<TinyGsm> modem)
@@ -42,7 +35,7 @@ SMS readSms(std::shared_ptr<TinyGsm> modem)
 
     String data = "";
     modem->sendAT("+CMGR=1"); // index 1 is the latest message
-    if (!modem->waitResponse(1000, data))
+    if (!modem->waitResponse(100, data))
     {
         EBIKE_ERR("Read SMS failed");
         return ret;
@@ -51,7 +44,6 @@ SMS readSms(std::shared_ptr<TinyGsm> modem)
     data.replace("\r\nOK\r\n", "");
     data.replace("\rOK\r", "");
     data.trim();
-    EBIKE_NFO("Last Data: ", data);
 
     int startIndex = 0;
     int endIndex = 0;
@@ -81,20 +73,20 @@ SMS readSms(std::shared_ptr<TinyGsm> modem)
             line.remove(line.length() - 1);
         }
 
-        // Only process non-empty lines (e.g., if there were consecutive newlines)
+        line.trim();
         if (line.length() > 0)
         {
-            if (lineNumber == 1)
+            switch (lineNumber)
             {
+            case 1:
                 ret.sender = getSmsSender(data);
-                if (ret.sender.length() > 0)
-                {
-                    EBIKE_NFO("SMS Sender: ", ret.sender);
-                }
-                else
-                {
-                    EBIKE_ERR("Failed to parse SMS sender");
-                }
+                break;
+            case 2:
+                ret.message = line;
+                ret.valid = true;
+                break;
+            default:
+                break;
             }
             lineNumber++;
         }
