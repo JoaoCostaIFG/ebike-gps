@@ -237,7 +237,7 @@ public:
         EBIKE_NFO("--------------------------------");
     }
 
-    bool post_location(String &server_url, String &client_id, double battery = 100)
+    bool post_location(const char *server_url, const char *client_id, double battery = 100)
     {
         bool ret = false;
         std::stringstream req_payload;

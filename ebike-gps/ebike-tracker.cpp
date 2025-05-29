@@ -6,7 +6,9 @@
 #include "modem_utilities.h"
 #include <TinyGsmClient.h>
 
+#include "ebike-sms.hpp"
 #include "ebike-log.hpp"
+#include "ebike-battery.hpp"
 #include "EBikeGPS.hpp"
 
 #ifdef DUMP_AT_COMMANDS // if enabled it requires the streamDebugger lib
@@ -205,26 +207,18 @@ void setup()
     EBIKE_ERR("Enable network failed!");
     restart();
   }
+
+  // Set SMS system into text mode
+  modem->sendAT("+CMGF=1");
+  modem->waitResponse();
+
   modem->https_begin();
   delay(5000);
   EBIKE_NFO("Network IP: ", modem->getLocalIP());
+  modem->https_end();
 
   gps.enable(3, GPS_1HZ);
   gps.bootstapWithGsm();
-}
-
-double readBattery()
-{
-  double vref = 1.100;
-  uint32_t volt = analogRead(BOARD_BAT_ADC_PIN);
-  double battery_voltage = ((double)volt / 4095.0) * 2.0 * 3.3 * (vref);
-
-  float battery_level = (((float)battery_voltage - 3) / 1.2) * 100;
-  if (battery_level > 100)
-  {
-    battery_level = 100;
-  }
-  return battery_level;
 }
 
 void loop()
@@ -237,8 +231,11 @@ void loop()
   }
 
 #ifdef EBIKE_DEBUG_BUILD
-  gps.display();
+  // gps.display();
 #endif // EBIKE_DEBUG_BUILD
-  gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery());
+
+  readSms(modem);
+
+  // gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery());
   gps.delay(3000UL);
 }
