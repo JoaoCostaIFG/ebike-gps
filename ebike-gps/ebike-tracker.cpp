@@ -20,6 +20,14 @@ std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
 // Global data
 static EBikeGPS gps(modem);
 
+static void restart()
+{
+  EBIKE_NFO("Power Off , restart device");
+  Serial.flush();
+  delay(100);
+  esp_restart();
+}
+
 static void start_modem()
 {
 #define RESET_MODEM_PWR                   \
@@ -154,11 +162,20 @@ void setup()
   // Set ring pin input
   pinMode(MODEM_RING_PIN, INPUT_PULLUP);
 
+  // adc setting start
+  // You don't need to set it, because the values ​​are all default. The current version is Arduino 3.0.4, and the subsequent versions are uncertain.
+  analogSetAttenuation(ADC_11db);
+  analogReadResolution(12);
+#if CONFIG_IDF_TARGET_ESP32
+  analogSetWidth(12);
+#endif
+  // adc setting end
+
   start_modem();
 
-  while (wait_sim_online())
+  if (wait_sim_online() != 0)
   {
-    // TODO hang on certain failures
+    restart();
   }
 
 #ifndef TINY_GSM_MODEM_SIM7672
@@ -172,21 +189,21 @@ void setup()
 #ifdef NETWORK_APN
   EBIKE_DBG("Set network apn: ", NETWORK_APN);
   modem->sendAT(GF("+CGDCONT=1,\"IP\",\""), NETWORK_APN, "\"");
-  while (!modem->waitResponse())
+  if (!modem->waitResponse())
   {
-    // TODO hang on certain failures
     EBIKE_ERR("Set network apn error!");
+    restart();
   }
 #endif
 
-  while (wait_network_registration())
+  if (wait_network_registration() != 0)
   {
-    // TODO hang
+    restart();
   }
-  while (!modem->enableNetwork())
+  if (!modem->enableNetwork())
   {
-    // TODO hang
     EBIKE_ERR("Enable network failed!");
+    restart();
   }
   modem->https_begin();
   delay(5000);
@@ -196,8 +213,32 @@ void setup()
   gps.bootstapWithGsm();
 }
 
+double readBattery()
+{
+  double vref = 1.100;
+  uint32_t volt = analogRead(BOARD_BAT_ADC_PIN);
+  double battery_voltage = ((double)volt / 4095.0) * 2.0 * 3.3 * (vref);
+
+  float battery_level = (((float)battery_voltage - 3) / 1.2) * 100;
+  if (battery_level > 100)
+  {
+    battery_level = 100;
+  }
+  return battery_level;
+}
+
 void loop()
 {
-  // gps.display();
-  // gps.delay(3000UL);
+  // Check if the modem is responsive, otherwise reboot
+  bool isPowerOn = modem->testAT(3000);
+  if (!isPowerOn)
+  {
+    restart();
+  }
+
+#ifdef EBIKE_DEBUG_BUILD
+  gps.display();
+#endif // EBIKE_DEBUG_BUILD
+  gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery());
+  gps.delay(3000UL);
 }
