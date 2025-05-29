@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <utility>
+#include <sstream>
 
 #include "ebike-conf.h"
 #include "modem_utilities.h"
@@ -10,7 +11,6 @@
 #include <TinyGPSPlus.h>
 
 #include "ebike-log.hpp"
-#include "ebike-wifi.hpp"
 
 #define GOOGLE_GEOLOCATION_API_URL "https://www.googleapis.com/geolocation/v1/geolocate?key="
 
@@ -29,6 +29,7 @@ private:
 
     double lat_value = 0;
     double lon_value = 0;
+    double altitude_value = 0;
     uint32_t satellites_value = 0;
 
     double speed = 0; // m/s
@@ -53,55 +54,6 @@ private:
         }
     }
 
-    int queryGoogleForLocation(std::pair<double, double> &coords)
-    {
-        String wifis = getSurroundingWiFiJson();
-
-        if (!modem->https_set_url(GOOGLE_GEOLOCATION_API_URL MAPS_API_KEY))
-        {
-            EBIKE_ERR("Failed to set URL");
-            return 1;
-        }
-        modem->https_add_header("Connection", "keep-alive");
-        modem->https_set_accept_type("application/json");
-        modem->https_set_user_agent("TinyGSM/A7670");
-        String post_body = "{\"considerIP\":false,\"wifiAccessPoints\":" + wifis + "}";
-
-        int httpCode = modem->https_post(post_body);
-        if (httpCode != 200)
-        {
-            EBIKE_ERR("HTTP post failed ! error code = ", httpCode);
-            return 1;
-        }
-
-        String body = modem->https_body();
-        EBIKE_DBG("HTTP body : ", body);
-        int idx = body.indexOf("\"lat\":");
-        if (idx != -1)
-        {
-            String tmp = body.substring(idx + 6);
-            coords.first = tmp.toDouble();
-        }
-        else
-        {
-            EBIKE_ERR("Failed to get latitude from Google Geo Location.");
-            return 2;
-        }
-        idx = body.indexOf("\"lng\":");
-        if (idx != -1)
-        {
-            String tmp = body.substring(idx + 6);
-            coords.second = tmp.toDouble();
-        }
-        else
-        {
-            EBIKE_ERR("Failed to get longitude from Google Geo Location.");
-            return 3;
-        }
-
-        return 0;
-    }
-
 public:
     EBikeGPS(std::shared_ptr<TinyGsm> modem)
     {
@@ -116,6 +68,11 @@ public:
     double lon()
     {
         return this->lon_value;
+    }
+
+    double altitude()
+    {
+        return this->altitude_value;
     }
 
     uint32_t satellites()
@@ -232,13 +189,14 @@ public:
 
         this->consume();
 
+        if (gps.altitude.isUpdated())
+        {
+            this->altitude_value = gps.altitude.meters();
+        }
         if (gps.location.isUpdated())
         {
-            if (gps.location.isValid())
-            {
-                this->lat_value = gps.location.lat();
-                this->lon_value = gps.location.lng();
-            }
+            this->lat_value = gps.location.lat();
+            this->lon_value = gps.location.lng();
         }
         if (gps.satellites.isUpdated())
         {
@@ -277,5 +235,51 @@ public:
         EBIKE_NFOF("Time: %02u:%02u:%02u", this->hour(), this->minute(), this->second());
         EBIKE_NFOF("Speed (km/h): %.2f", this->speed_kmph());
         EBIKE_NFO("--------------------------------");
+    }
+
+    bool post_location(String &server_url, String &client_id, double battery = 100)
+    {
+        bool ret = false;
+        std::stringstream req_payload;
+        // TODO: calculate bat and altitude
+        req_payload << "deviceid=" << client_id
+                    << "&lat=" << this->lat()
+                    << "&lon=" << this->lon()
+                    << "&speed=" << this->speed_mps()
+                    << "&altitude=" << this->altitude()
+                    << "&batt=" << battery;
+        std::string req_payload_str = req_payload.str();
+
+        // Initialize HTTPS
+        modem->https_begin();
+
+        EBIKE_DBG("Posting location to ", server_url);
+        EBIKE_DBG("With payload: ", req_payload_str.c_str());
+
+        // Set Post URL
+        if (!modem->https_set_url(server_url))
+        {
+            EBIKE_ERR("Failed to set the URL. Please check the validity of the URL!");
+            ret = false;
+            return false;
+        }
+        else
+        {
+            modem->https_set_user_agent("TinyGSM/LilyGo-A7670");
+            int httpCode = modem->https_post(req_payload_str.c_str());
+            if (httpCode == 200)
+            {
+                ret = true;
+            }
+            else
+            {
+                EBIKE_ERRF("HTTP post failed ! error code = %d\n", httpCode);
+                ret = false;
+            }
+
+            modem->https_end();
+        }
+
+        return ret;
     }
 };
