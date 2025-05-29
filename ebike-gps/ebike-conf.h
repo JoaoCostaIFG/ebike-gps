@@ -1,6 +1,7 @@
 #pragma once
 
 /*
+#define MY_PHONE "+123XXXXXXXXX" // Replace with your phone number
 #define TRACCAR_URL "https://traccar.org"
 #define TRACCAR_ID "123"
 */
