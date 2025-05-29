@@ -21,6 +21,7 @@ std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
 
 // Global data
 static EBikeGPS gps(modem);
+static size_t err_count = 0;
 
 static void restart()
 {
@@ -221,6 +222,38 @@ void setup()
   gps.bootstapWithGsm();
 }
 
+static bool processSmsCmds()
+{
+  SMS sms = readSms(modem);
+  if (!sms.valid)
+  {
+    return false;
+  }
+  deleteSMSByIndex(modem, 1);
+
+  if (sms.sender != MY_PHONE)
+  {
+    EBIKE_NFO("SMS from unknown sender: ", sms.sender);
+    return false;
+  }
+
+  EBIKE_NFO("Processing SMS command: ", sms.message);
+
+  sms.message.toUpperCase();
+  if (sms.message == "RESTART")
+  {
+    restart();
+  }
+  else if (sms.message == "GPS")
+  {
+    modem->sendSMS(MY_PHONE, "GPS location: " + String(gps.lat(), 8) + "," +
+                                      String(gps.lon(), 8));
+    gps.display();
+  }
+
+  return true;
+}
+
 void loop()
 {
   // Check if the modem is responsive, otherwise reboot
@@ -231,11 +264,24 @@ void loop()
   }
 
 #ifdef EBIKE_DEBUG_BUILD
-  // gps.display();
+  gps.display();
 #endif // EBIKE_DEBUG_BUILD
 
-  readSms(modem);
+  processSmsCmds();
 
-  // gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery());
+  if (!gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery()))
+  {
+    err_count++;
+  }
+  else
+  {
+    err_count = 0;
+  }
+  if (err_count > 10)
+  {
+    EBIKE_ERR("Too many errors, restarting...");
+    restart();
+  }
+
   gps.delay(3000UL);
 }
