@@ -1,5 +1,8 @@
 #pragma once
 
+#include "ebike-conf.h"
+#include <Arduino.h>
+
 #define EBIKE_LOG_HD Serial.printf("[%lu] ", millis() / 1000)
 
 template <typename T>

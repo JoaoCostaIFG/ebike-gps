@@ -22,6 +22,7 @@ std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
 // Global data
 static EBikeGPS gps(modem);
 static size_t err_count = 0;
+static bool traccar_enabled = false;
 
 static void restart()
 {
@@ -246,12 +247,63 @@ static bool processSmsCmds()
   }
   else if (sms.message == "GPS")
   {
+    EBIKE_NFO("GPS command received, sending current GPS location.");
     modem->sendSMS(MY_PHONE, "GPS location: " + String(gps.lat(), 8) + "," +
-                                      String(gps.lon(), 8));
+                                 String(gps.lon(), 8));
     gps.display();
+  }
+  else if (sms.message == "BATTERY")
+  {
+    double battery = readBattery();
+    EBIKE_NFOF("Battery level: %.2f%%", battery);
+    modem->sendSMS(MY_PHONE, "Battery level: " + String(battery, 2) + "%");
+  }
+  else if (sms.message == "ON")
+  {
+    traccar_enabled = true;
+    EBIKE_NFO("Traccar enabled.");
+  }
+  else if (sms.message == "OFF")
+  {
+    traccar_enabled = false;
+    EBIKE_NFO("Traccar disabled.");
   }
 
   return true;
+}
+
+void light_sleep_delay(uint32_t ms)
+{
+#ifdef DEBUG_SKETCH
+    delay(ms);
+#else
+    esp_sleep_enable_timer_wakeup(ms * 1000);
+    esp_light_sleep_start();
+#endif
+}
+
+void modem_enter_sleep(uint32_t ms)
+{
+    EBIKE_DBGF("Enter modem sleep mode,Will wake up in %u seconds", ms / 1000);
+
+    // Pull up DTR to put the modem into sleep
+    pinMode(MODEM_DTR_PIN, OUTPUT);
+    digitalWrite(MODEM_DTR_PIN, HIGH);
+
+    if (!modem->sleepEnable(true)) {
+        EBIKE_ERR("modem sleep failed!");
+    } else {
+        EBIKE_NFO("Modem enter sleep modem successes!");
+    }
+
+    light_sleep_delay(ms);
+
+    // Pull down DTR to wake up MODEM
+    pinMode(MODEM_DTR_PIN, OUTPUT);
+    digitalWrite(MODEM_DTR_PIN, LOW);
+
+    // Wait modem wakeup
+    light_sleep_delay(500);
 }
 
 void loop()
@@ -264,23 +316,26 @@ void loop()
   }
 
 #ifdef EBIKE_DEBUG_BUILD
-  gps.display();
+  // gps.display();
 #endif // EBIKE_DEBUG_BUILD
 
   processSmsCmds();
 
-  if (!gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery()))
+  if (traccar_enabled)
   {
-    err_count++;
-  }
-  else
-  {
-    err_count = 0;
-  }
-  if (err_count > 10)
-  {
-    EBIKE_ERR("Too many errors, restarting...");
-    restart();
+    if (!gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery()))
+    {
+      err_count++;
+    }
+    else
+    {
+      err_count = 0;
+    }
+    if (err_count > 10)
+    {
+      EBIKE_ERR("Too many errors, restarting...");
+      restart();
+    }
   }
 
   gps.delay(3000UL);

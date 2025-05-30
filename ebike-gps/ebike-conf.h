@@ -1,9 +1,16 @@
 #pragma once
 
 /*
-#define MY_PHONE "+123XXXXXXXXX" // Replace with your phone number
+// Replace with your phone number (to send SMS commands)
+#define MY_PHONE "+123XXXXXXXXX"
+// URL of the traccar server
 #define TRACCAR_URL "https://traccar.org"
+// ID of the device in the traccar server
 #define TRACCAR_ID "123"
+// It depends on the operator whether to set up an APN
+#define NETWORK_APN "internet"
+// SIM might need PIN to unlock (optional)
+#define SIMCARD_PIN "1234"
 */
 #include "ebike-conf-priv.h"
 
@@ -18,7 +25,3 @@
 #define SerialMon Serial
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG SerialMon
-// It depends on the operator whether to set up an APN
-#define NETWORK_APN "internet"
-// SIM might need PIN to unlock
-#define SIMCARD_PIN "7010"
