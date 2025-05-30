@@ -13,20 +13,15 @@
 #include "ebike-log.hpp"
 
 // Docs: https://www.traccar.org/osmand/
-#define POST_FORMAT "deviceid=%s&lat=%.7f&lon=%.7f&speed=%.2f&altitude=%.2f&batt=%u"
-
-enum GPS_RATE
-{
-    GPS_1HZ = 1,
-    GPS_2HZ = 2,
-    GPS_5HZ = 5,
-};
+#define POST_FORMAT "deviceid=%s&lat=%.7f&lon=%.7f&speed=%.2f&altitude=%.2f&batt=%.2f&charge=%s"
 
 class EBikeGPS
 {
 private:
     std::shared_ptr<TinyGsm> modem;
     TinyGPSPlus gps;
+
+    uint32_t gps_failures = 0;
 
     double lat_value = 0;
     double lon_value = 0;
@@ -116,10 +111,17 @@ public:
         return this->second_value;
     }
 
-    void enable(uint8_t mode, enum GPS_RATE rate)
+    /*
+     * Mode can be:
+     * 1 - GPS L1 + SBAS + QZSS
+     * 2 - BDS B1
+     * 3 - GPS + GLONASS + GALILEO + SBAS + QZSS
+     * 4 - GPS + BDS + GALILEO + SBAS + QZSS.
+     */
+    void enable(uint8_t mode)
     {
         EBIKE_DBG("Enabling GPS");
-        while (!modem->enableGPS(MODEM_GPS_ENABLE_GPIO))
+        while (!modem->enableGPS(MODEM_GPS_ENABLE_GPIO, MODEM_GPS_ENABLE_LEVEL))
         {
             EBIKE_DBG(".");
             sleep(100);
@@ -131,9 +133,6 @@ public:
         {
             EBIKE_ERR("Failed to set gps mode");
         }
-        modem->configNMEASentence(1, 1, 1, 1, 1, 1);
-        modem->setGPSOutputRate(rate);
-        modem->enableNMEA();
         if (!modem->enableAGPS())
         {
             EBIKE_ERR("Failed to enable AGPS");
@@ -168,63 +167,35 @@ public:
         this->second_value = (uint8_t)sec;
     }
 
-    /**
-     * This custom version of delay() ensures that the gps object
-     * is being "fed".
-     */
-    void delay(unsigned long ms)
+    bool update()
     {
-        unsigned long start = millis();
-        if (start > 30000UL && gps.charsProcessed() < 10U)
+        GPSInfo info;
+        bool rlst = modem->getGPS_Ex(info);
+        if (!rlst)
         {
-            EBIKE_ERR("No GPS data received yet: check wiring");
+            this->gps_failures++;
+            if (this->gps_failures > 10)
+            {
+                EBIKE_ERR("Failed to get GPS info, using GSM location as fallback.");
+                this->bootstapWithGsm();
+            }
+            return false;
         }
 
-        // TODO not here
-        // restart GPS is needed
-        if (!modem->isEnableGPS())
-        {
-            EBIKE_DBG("Restart GPS!");
-            modem->enableGPS();
-        }
+        this->altitude_value = info.altitude;
+        this->lat_value = info.latitude;
+        this->lon_value = info.longitude;
+        this->satellites_value = info.gps_satellite_num + info.beidou_satellite_num +
+                                 info.glonass_satellite_num + info.galileo_satellite_num;
+        this->speed = info.speed; // m/s
+        this->day_value = info.day;
+        this->month_value = info.month;
+        this->year_value = info.year;
+        this->hour_value = info.hour;
+        this->minute_value = info.minute;
+        this->second_value = info.second;
 
-        this->consume();
-
-        if (gps.altitude.isUpdated())
-        {
-            this->altitude_value = gps.altitude.meters();
-        }
-        if (gps.location.isUpdated())
-        {
-            this->lat_value = gps.location.lat();
-            this->lon_value = gps.location.lng();
-        }
-        if (gps.satellites.isUpdated())
-        {
-            this->satellites_value = gps.satellites.value();
-        }
-        if (gps.speed.isUpdated())
-        {
-            this->speed = gps.speed.mps();
-        }
-        if (gps.date.isUpdated())
-        {
-            this->day_value = gps.date.day();
-            this->month_value = gps.date.month();
-            this->year_value = gps.date.year();
-        }
-        if (gps.time.isUpdated())
-        {
-            this->hour_value = gps.time.hour();
-            this->minute_value = gps.time.minute();
-            this->second_value = gps.time.second();
-        }
-
-        // wait remaining requested time
-        do
-        {
-            this->consume();
-        } while (millis() - start < ms);
+        return true;
     }
 
     void display()
@@ -240,15 +211,13 @@ public:
     bool post_location(const char *server_url, const char *client_id, double battery = 100)
     {
         bool ret = false;
-        char post_buffer[128];
+        char post_buffer[256];
         snprintf(post_buffer, sizeof(post_buffer), POST_FORMAT,
-                 client_id, this->lat(), this->lon(), this->speed_mps(), this->altitude(), battery);
+                 client_id, this->lat(), this->lon(), this->speed_mps(),
+                 this->altitude(), battery, (battery == 0.0) ? "true" : "false");
 
         // Initialize HTTPS
         modem->https_begin();
-
-        EBIKE_DBG("Posting location to ", server_url);
-        EBIKE_DBG("With payload: ", post_buffer);
 
         // Set Post URL
         if (!modem->https_set_url(server_url))
@@ -267,7 +236,7 @@ public:
             }
             else
             {
-                EBIKE_ERRF("HTTP post failed ! error code = %d\n", httpCode);
+                EBIKE_ERR("HTTP post failed! error code = ", httpCode);
                 ret = false;
             }
 

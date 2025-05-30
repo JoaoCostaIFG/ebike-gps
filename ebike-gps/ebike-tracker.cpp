@@ -21,7 +21,6 @@ std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
 
 // Global data
 static EBikeGPS gps(modem);
-static size_t err_count = 0;
 static bool traccar_enabled = false;
 
 static void restart()
@@ -204,7 +203,7 @@ void setup()
   {
     restart();
   }
-  if (!modem->enableNetwork())
+  if (!modem->setNetworkActive())
   {
     EBIKE_ERR("Enable network failed!");
     restart();
@@ -219,7 +218,7 @@ void setup()
   EBIKE_NFO("Network IP: ", modem->getLocalIP());
   modem->https_end();
 
-  gps.enable(3, GPS_1HZ);
+  gps.enable(3);
   gps.bootstapWithGsm();
 }
 
@@ -248,11 +247,14 @@ static bool processSmsCmds()
   else if (sms.message == "GPS")
   {
     EBIKE_NFO("GPS command received, sending current GPS location.");
-    modem->sendSMS(MY_PHONE, "GPS location: " + String(gps.lat(), 8) + "," +
+    modem->sendSMS(MY_PHONE, "https://www.google.com/maps/place/" +
+                                 String(gps.lat(), 8) + "," +
                                  String(gps.lon(), 8));
+#ifdef EBIKE_DEBUG_BUILD
     gps.display();
+#endif // EBIKE_GPS_DEBUG
   }
-  else if (sms.message == "BATTERY")
+  else if (sms.message == "BAT")
   {
     double battery = readBattery();
     EBIKE_NFOF("Battery level: %.2f%%", battery);
@@ -260,13 +262,13 @@ static bool processSmsCmds()
   }
   else if (sms.message == "ON")
   {
-    traccar_enabled = true;
     EBIKE_NFO("Traccar enabled.");
+    traccar_enabled = true;
   }
   else if (sms.message == "OFF")
   {
-    traccar_enabled = false;
     EBIKE_NFO("Traccar disabled.");
+    traccar_enabled = false;
   }
 
   return true;
@@ -275,68 +277,70 @@ static bool processSmsCmds()
 void light_sleep_delay(uint32_t ms)
 {
 #ifdef DEBUG_SKETCH
-    delay(ms);
+  delay(ms);
 #else
-    esp_sleep_enable_timer_wakeup(ms * 1000);
-    esp_light_sleep_start();
+  esp_sleep_enable_timer_wakeup(ms * 1000);
+  esp_light_sleep_start();
 #endif
 }
 
 void modem_enter_sleep(uint32_t ms)
 {
-    EBIKE_DBGF("Enter modem sleep mode,Will wake up in %u seconds", ms / 1000);
+  // Pull up DTR to put the modem into sleep
+  pinMode(MODEM_DTR_PIN, OUTPUT);
+  digitalWrite(MODEM_DTR_PIN, HIGH);
 
-    // Pull up DTR to put the modem into sleep
-    pinMode(MODEM_DTR_PIN, OUTPUT);
-    digitalWrite(MODEM_DTR_PIN, HIGH);
+  if (!modem->sleepEnable(true))
+  {
+    EBIKE_ERR("modem sleep failed!");
+  }
 
-    if (!modem->sleepEnable(true)) {
-        EBIKE_ERR("modem sleep failed!");
-    } else {
-        EBIKE_NFO("Modem enter sleep modem successes!");
-    }
+  light_sleep_delay(ms);
 
-    light_sleep_delay(ms);
+  // Pull down DTR to wake up MODEM
+  pinMode(MODEM_DTR_PIN, OUTPUT);
+  digitalWrite(MODEM_DTR_PIN, LOW);
 
-    // Pull down DTR to wake up MODEM
-    pinMode(MODEM_DTR_PIN, OUTPUT);
-    digitalWrite(MODEM_DTR_PIN, LOW);
-
-    // Wait modem wakeup
-    light_sleep_delay(500);
+  // Wait modem wakeup
+  light_sleep_delay(500);
 }
 
 void loop()
 {
   // Check if the modem is responsive, otherwise reboot
-  bool isPowerOn = modem->testAT(3000);
-  if (!isPowerOn)
+  bool is_power_on = modem->testAT(3000);
+  if (!is_power_on)
   {
     restart();
   }
 
-#ifdef EBIKE_DEBUG_BUILD
-  // gps.display();
-#endif // EBIKE_DEBUG_BUILD
-
   processSmsCmds();
 
+  bool gps_success = gps.update();
+  bool post_success = true;
   if (traccar_enabled)
   {
-    if (!gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery()))
+    post_success = gps.post_location(TRACCAR_URL, TRACCAR_ID, readBattery());
+  }
+
+  if (gps_success)
+  {
+    if (post_success)
     {
-      err_count++;
+      // If the positioning is successful and the location is sent successfully,
+      // the ESP and modem are set to sleep mode. The sleep mode consumes about 2~3mA
+      modem_enter_sleep(REPORT_LOCATION_RATE_SECOND * 1000);
     }
     else
     {
-      err_count = 0;
-    }
-    if (err_count > 10)
-    {
-      EBIKE_ERR("Too many errors, restarting...");
-      restart();
+      // If the positioning is successful, if the sending of the position fails,
+      // set the ESP to sleep mode and wait for the next sending
+      light_sleep_delay(REPORT_LOCATION_RATE_SECOND * 1000);
     }
   }
-
-  gps.delay(3000UL);
+  else
+  {
+    // If positioning is not successful, set ESP to enter light sleep mode to save power consumption
+    light_sleep_delay(15000);
+  }
 }
