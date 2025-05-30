@@ -38,18 +38,6 @@ private:
     uint8_t minute_value;
     uint8_t second_value;
 
-    void consume()
-    {
-        while (SerialAT.available())
-        {
-            int ch = SerialAT.read();
-#ifdef DUMP_AT_COMMANDS
-            Serial.write(ch);
-#endif // DUMP_AT_COMMANDS
-            gps.encode(ch);
-        }
-    }
-
 public:
     EBikeGPS(std::shared_ptr<TinyGsm> modem)
     {
@@ -181,6 +169,7 @@ public:
             }
             return false;
         }
+        this->gps_failures = 0;
 
         this->altitude_value = info.altitude;
         this->lat_value = info.latitude;

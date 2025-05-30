@@ -27,3 +27,5 @@
 #define TINY_GSM_DEBUG SerialMon
 // How many seconds to wait between location reports
 #define REPORT_LOCATION_RATE_SECOND 5
+// Enable traccar from the start
+#define TRACCAR_ENABLED true

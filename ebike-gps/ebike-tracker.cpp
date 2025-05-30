@@ -21,7 +21,7 @@ std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
 
 // Global data
 static EBikeGPS gps(modem);
-static bool traccar_enabled = false;
+static bool traccar_enabled = TRACCAR_ENABLED;
 
 static void restart()
 {
@@ -237,8 +237,6 @@ static bool processSmsCmds()
     return false;
   }
 
-  EBIKE_NFO("Processing SMS command: ", sms.message);
-
   sms.message.toUpperCase();
   if (sms.message == "RESTART")
   {
@@ -246,7 +244,6 @@ static bool processSmsCmds()
   }
   else if (sms.message == "GPS")
   {
-    EBIKE_NFO("GPS command received, sending current GPS location.");
     modem->sendSMS(MY_PHONE, "https://www.google.com/maps/place/" +
                                  String(gps.lat(), 8) + "," +
                                  String(gps.lon(), 8));
@@ -257,18 +254,21 @@ static bool processSmsCmds()
   else if (sms.message == "BAT")
   {
     double battery = readBattery();
-    EBIKE_NFOF("Battery level: %.2f%%", battery);
     modem->sendSMS(MY_PHONE, "Battery level: " + String(battery, 2) + "%");
   }
   else if (sms.message == "ON")
   {
-    EBIKE_NFO("Traccar enabled.");
     traccar_enabled = true;
+    modem->sendSMS(MY_PHONE, "Traccar enabled.");
   }
   else if (sms.message == "OFF")
   {
-    EBIKE_NFO("Traccar disabled.");
     traccar_enabled = false;
+    modem->sendSMS(MY_PHONE, "Traccar disabled.");
+  }
+  else
+  {
+    EBIKE_ERR("Unknown SMS command: ", sms.message);
   }
 
   return true;
