@@ -24,7 +24,6 @@ static String getSmsSender(const String &line)
 
 bool deleteSMSByIndex(std::shared_ptr<TinyGsm> modem, int index)
 {
-    EBIKE_DBG("Deleting SMS at index: ", index);
     modem->sendAT("+CMGD=" + String(index));
     return modem->waitResponse();
 }

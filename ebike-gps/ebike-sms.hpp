@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ebike-conf.h"
 #include <memory>
 #include "modem_utilities.h"
 #include <TinyGsmClient.h>

@@ -12,7 +12,8 @@
 
 #include "ebike-log.hpp"
 
-#define GOOGLE_GEOLOCATION_API_URL "https://www.googleapis.com/geolocation/v1/geolocate?key="
+// Docs: https://www.traccar.org/osmand/
+#define POST_FORMAT "deviceid=%s&lat=%.7f&lon=%.7f&speed=%.2f&altitude=%.2f&batt=%u"
 
 enum GPS_RATE
 {
@@ -228,8 +229,7 @@ public:
 
     void display()
     {
-        // EBIKE_NFOF("Location (Lat,Lon): %.8f,%.8f\nhttps://www.google.com/maps/search/%.8f,%.8f", this->lat(), this->lon(), this->lat(), this->lon());
-        EBIKE_NFOF("Location (Lat,Lon): %.8f,%.8f", this->lat(), this->lon());
+        EBIKE_NFOF("Location (Lat,Lon): %.7f,%.7f", this->lat(), this->lon());
         EBIKE_NFO("Satelites: ", this->satellites());
         EBIKE_NFOF("Date: %04u-%02u-%02u", this->year(), this->month(), this->day());
         EBIKE_NFOF("Time: %02u:%02u:%02u", this->hour(), this->minute(), this->second());
@@ -240,21 +240,15 @@ public:
     bool post_location(const char *server_url, const char *client_id, double battery = 100)
     {
         bool ret = false;
-        std::stringstream req_payload;
-        // TODO: calculate bat and altitude
-        req_payload << "deviceid=" << client_id
-                    << "&lat=" << this->lat()
-                    << "&lon=" << this->lon()
-                    << "&speed=" << this->speed_mps()
-                    << "&altitude=" << this->altitude()
-                    << "&batt=" << battery;
-        std::string req_payload_str = req_payload.str();
+        char post_buffer[128];
+        snprintf(post_buffer, sizeof(post_buffer), POST_FORMAT,
+                 client_id, this->lat(), this->lon(), this->speed_mps(), this->altitude(), battery);
 
         // Initialize HTTPS
         modem->https_begin();
 
         EBIKE_DBG("Posting location to ", server_url);
-        EBIKE_DBG("With payload: ", req_payload_str.c_str());
+        EBIKE_DBG("With payload: ", post_buffer);
 
         // Set Post URL
         if (!modem->https_set_url(server_url))
@@ -266,7 +260,7 @@ public:
         else
         {
             modem->https_set_user_agent("TinyGSM/LilyGo-A7670");
-            int httpCode = modem->https_post(req_payload_str.c_str());
+            int httpCode = modem->https_post(post_buffer);
             if (httpCode == 200)
             {
                 ret = true;
