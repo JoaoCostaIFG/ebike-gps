@@ -12,10 +12,8 @@ double readBattery()
 {
     uint32_t rawAdc = analogRead(BOARD_BAT_ADC_PIN);
     double voltage = ((double)rawAdc / 4095.0) * 3.3 * VOLTAGE_DIVIDER_RATIO;
-    EBIKE_NFO("Raw ADC: ", rawAdc, " Voltage: ", voltage);
 
     double battery_percentage = ((voltage - MIN_BATTERY_V) / (MAX_BATTERY_V - MIN_BATTERY_V)) * 100.0;
-    EBIKE_NFO("Battery percentage: ", battery_percentage);
     if (battery_percentage > 100.0){
         battery_percentage = 100.0;
     }

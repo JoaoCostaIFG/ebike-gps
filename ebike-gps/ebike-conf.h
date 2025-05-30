@@ -25,3 +25,5 @@
 #define SerialMon Serial
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG SerialMon
+// How many seconds to wait between location reports
+#define REPORT_LOCATION_RATE_SECOND 5
