@@ -277,7 +277,7 @@ void setup()
   }
 
   alert("Hello, finished booting up.\n"
-        "Available commands: RESTART, GPS, BAT, ON, OFF, ALARM, ALARMOFF.");
+        "Available commands: RESTART, GPS, BAT, TRACK, TRACKOFF, ALARM, ALARMOFF.");
 }
 
 static bool processSmsCmds()
@@ -315,12 +315,12 @@ static bool processSmsCmds()
     double battery = readBattery();
     alert("Battery level: " + String(battery, 2) + "%");
   }
-  else if (sms.message == "ON")
+  else if (sms.message == "TRACK")
   {
     traccar_enabled = true;
     alert("Traccar enabled.");
   }
-  else if (sms.message == "OFF")
+  else if (sms.message == "TRACKOFF")
   {
     traccar_enabled = false;
     alert("Traccar disabled.");
