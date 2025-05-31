@@ -1,19 +1,17 @@
-#include "ebike-conf.h"
+#include "ebike-log.hpp"
 
-#include <Arduino.h>
 #include <memory>
 
-#include "modem_utilities.h"
 #include <TinyGsmClient.h>
+#include <SparkFunLSM6DS3.h>
 
 #include "ebike-sms.hpp"
-#include "ebike-log.hpp"
 #include "ebike-battery.hpp"
 #include "EBikeGPS.hpp"
 
 #ifdef DUMP_AT_COMMANDS // if enabled it requires the streamDebugger lib
 #include <StreamDebugger.h>
-StreamDebugger debugger(SerialAT, SerialMon);
+
 std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(debugger);
 #else
 std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
@@ -21,14 +19,28 @@ std::shared_ptr<TinyGsm> modem = std::make_shared<TinyGsm>(SerialAT);
 
 // Global data
 static EBikeGPS gps(modem);
+static LSM6DS3 imu(I2C_MODE, 0x6B);
 static bool traccar_enabled = TRACCAR_ENABLED;
+static bool alarm_enabled = false;
+static bool alarm_triggered = false;
 
 static void restart()
 {
-  EBIKE_NFO("Power Off , restart device");
+  EBIKE_NFO("Restarting the system...");
   Serial.flush();
   delay(100);
   esp_restart();
+}
+
+static bool alert(const String &message)
+{
+  EBIKE_DBG("Sending SMS alert: ", message);
+  if (!modem->sendSMS(MY_PHONE, message))
+  {
+    EBIKE_ERR("Failed to send SMS alert");
+    return false;
+  }
+  return true;
 }
 
 static void start_modem()
@@ -53,14 +65,14 @@ static void start_modem()
   delay(3000);
   for (unsigned retry = 0; !modem->testAT(1000); ++retry)
   {
-    EBIKE_DBG(".");
+    EBIKE_NFO(".");
     if (retry > 10)
     {
       RESET_MODEM_PWR;
       retry = 0;
     }
   }
-  EBIKE_DBG("Modem started.");
+  EBIKE_NFO("Modem started.");
   delay(200);
 }
 
@@ -144,6 +156,50 @@ static int wait_network_registration()
   return 0;
 }
 
+static bool setup_accelerometer()
+{
+  if (imu.beginCore() != 0)
+  {
+    return false;
+  }
+
+  uint8_t errorAccumulator = 0;
+  uint8_t dataToWrite = LSM6DS3_ACC_GYRO_BW_XL_200Hz |
+                        LSM6DS3_ACC_GYRO_FS_XL_2g |
+                        LSM6DS3_ACC_GYRO_ODR_XL_416Hz;
+
+  errorAccumulator += imu.writeRegister(LSM6DS3_ACC_GYRO_CTRL1_XL, dataToWrite);
+
+  // Set the ODR bit
+  errorAccumulator += imu.readRegister(&dataToWrite, LSM6DS3_ACC_GYRO_CTRL4_C);
+  dataToWrite &= ~((uint8_t)LSM6DS3_ACC_GYRO_BW_SCAL_ODR_ENABLED);
+
+  // Enable tap detection on X, Y, Z axis, but do not latch output
+  errorAccumulator += imu.writeRegister(LSM6DS3_ACC_GYRO_TAP_CFG1, 0x0E);
+
+  // Set tap threshold
+  errorAccumulator += imu.writeRegister(LSM6DS3_ACC_GYRO_TAP_THS_6D, 0x03);
+
+  // Set Duration, Quiet and Shock time windows
+  errorAccumulator += imu.writeRegister(LSM6DS3_ACC_GYRO_INT_DUR2, 0x7F);
+
+  // Single & Double tap enabled (SINGLE_DOUBLE_TAP = 1)
+  errorAccumulator += imu.writeRegister(LSM6DS3_ACC_GYRO_WAKE_UP_THS, 0x80);
+
+  // Single tap interrupt driven to INT1 pin -- enable latch
+  errorAccumulator += imu.writeRegister(LSM6DS3_ACC_GYRO_MD1_CFG, 0x48);
+
+  if (errorAccumulator)
+  {
+    return false;
+  }
+
+  // Configure interrupt pin
+  gpio_set_direction(ACCEL_PIN, GPIO_MODE_INPUT);
+
+  return true;
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -186,11 +242,9 @@ void setup()
   {
     EBIKE_ERR("Set network mode failed!");
   }
-  EBIKE_DBG("Current network mode: ", modem->getNetworkModes());
 #endif
 
 #ifdef NETWORK_APN
-  EBIKE_DBG("Set network apn: ", NETWORK_APN);
   modem->sendAT(GF("+CGDCONT=1,\"IP\",\""), NETWORK_APN, "\"");
   if (!modem->waitResponse())
   {
@@ -213,13 +267,17 @@ void setup()
   modem->sendAT("+CMGF=1");
   modem->waitResponse();
 
-  modem->https_begin();
-  delay(5000);
-  EBIKE_NFO("Network IP: ", modem->getLocalIP());
-  modem->https_end();
-
   gps.enable(3);
   gps.bootstapWithGsm();
+
+  // accelerometer and gyroscope initialization
+  if (!setup_accelerometer())
+  {
+    EBIKE_ERR("Failed to setup accelerometer.");
+  }
+
+  alert("Hello, finished booting up.\n"
+        "Available commands: RESTART, GPS, BAT, ON, OFF, ALARM, ALARMOFF.");
 }
 
 static bool processSmsCmds()
@@ -234,19 +292,20 @@ static bool processSmsCmds()
   if (sms.sender != MY_PHONE)
   {
     EBIKE_NFO("SMS from unknown sender: ", sms.sender);
-    return false;
+    return true;
   }
 
   sms.message.toUpperCase();
   if (sms.message == "RESTART")
   {
+    alert("Restarting");
     restart();
   }
   else if (sms.message == "GPS")
   {
-    modem->sendSMS(MY_PHONE, "https://www.google.com/maps/place/" +
-                                 String(gps.lat(), 8) + "," +
-                                 String(gps.lon(), 8));
+    alert("https://www.google.com/maps/place/" +
+          String(gps.lat(), 8) + "," +
+          String(gps.lon(), 8));
 #ifdef EBIKE_DEBUG_BUILD
     gps.display();
 #endif // EBIKE_GPS_DEBUG
@@ -254,17 +313,27 @@ static bool processSmsCmds()
   else if (sms.message == "BAT")
   {
     double battery = readBattery();
-    modem->sendSMS(MY_PHONE, "Battery level: " + String(battery, 2) + "%");
+    alert("Battery level: " + String(battery, 2) + "%");
   }
   else if (sms.message == "ON")
   {
     traccar_enabled = true;
-    modem->sendSMS(MY_PHONE, "Traccar enabled.");
+    alert("Traccar enabled.");
   }
   else if (sms.message == "OFF")
   {
     traccar_enabled = false;
-    modem->sendSMS(MY_PHONE, "Traccar disabled.");
+    alert("Traccar disabled.");
+  }
+  else if (sms.message == "ALARM")
+  {
+    alarm_enabled = true;
+    alert("Alarm on.");
+  }
+  else if (sms.message == "ALARMOFF")
+  {
+    alarm_enabled = false;
+    alert("Alarm off.");
   }
   else
   {
@@ -276,16 +345,36 @@ static bool processSmsCmds()
 
 void light_sleep_delay(uint32_t ms)
 {
-#ifdef DEBUG_SKETCH
-  delay(ms);
-#else
+  EBIKE_DBG("Entering light sleep for ", ms, " ms");
+
+  if (alarm_enabled)
+  {
+    esp_sleep_enable_ext0_wakeup(ACCEL_PIN, 1);
+  }
   esp_sleep_enable_timer_wakeup(ms * 1000);
   esp_light_sleep_start();
-#endif
+  // Disable wakeup sources after waking up
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
+  if (alarm_enabled)
+  {
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);
+  }
+
+  if (alarm_enabled)
+  {
+    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0)
+    {
+      alarm_enabled = false; // Disable alarm after triggering
+      alarm_triggered = true;
+    }
+  }
 }
 
 void modem_enter_sleep(uint32_t ms)
 {
+  EBIKE_DBG("Entering modem sleep for ", ms, " ms");
+
   // Pull up DTR to put the modem into sleep
   pinMode(MODEM_DTR_PIN, OUTPUT);
   digitalWrite(MODEM_DTR_PIN, HIGH);
@@ -314,7 +403,19 @@ void loop()
     restart();
   }
 
-  processSmsCmds();
+  if (alarm_enabled && alarm_triggered)
+  {
+    // If the alarm is enabled and the accelerometer detects a tap, send an SMS
+    EBIKE_NFO("Alarm triggered.");
+    alert("Alarm triggered by accelerometer.");
+  }
+  alarm_triggered = false; // Reset the alarm trigger
+
+  // Handle SMS commands
+  while (processSmsCmds())
+  {
+    // Process SMS commands until no more valid SMS are found
+  }
 
   bool gps_success = gps.update();
   bool post_success = true;
@@ -327,20 +428,20 @@ void loop()
   {
     if (post_success)
     {
-      // If the positioning is successful and the location is sent successfully,
-      // the ESP and modem are set to sleep mode. The sleep mode consumes about 2~3mA
+      // If the positioning is successful, if posting the position is successful,
+      // the ESP and modem are set to sleep (ultra low power consumption)
       modem_enter_sleep(REPORT_LOCATION_RATE_SECOND * 1000);
     }
     else
     {
-      // If the positioning is successful, if the sending of the position fails,
-      // set the ESP to sleep mode and wait for the next sending
+      // If the positioning is successful, if posting the position fails,
+      // set ESP to sleep and try again later (keep modem awake)
       light_sleep_delay(REPORT_LOCATION_RATE_SECOND * 1000);
     }
   }
   else
   {
-    // If positioning is not successful, set ESP to enter light sleep mode to save power consumption
+    // If positioning is not successful, set ESP to sleep (keep modem awake)
     light_sleep_delay(15000);
   }
 }

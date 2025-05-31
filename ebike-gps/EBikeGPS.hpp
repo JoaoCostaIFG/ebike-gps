@@ -13,7 +13,9 @@
 #include "ebike-log.hpp"
 
 // Docs: https://www.traccar.org/osmand/
-#define POST_FORMAT "deviceid=%s&lat=%.7f&lon=%.7f&speed=%.2f&altitude=%.2f&batt=%.2f&charge=%s"
+#define POST_FORMAT "deviceid=%s&lat=%.7f&lon=%.7f&speed=%.2f&altitude=%.2f&accuracy=%.2f&hdop=%.2f&batt=%.2f&charge=%s"
+// User Equivalent Range Error (UERE). Typically 5.0 for consumer grade GPS devices.
+#define UERE 5.0
 
 class EBikeGPS
 {
@@ -22,6 +24,7 @@ private:
     TinyGPSPlus gps;
 
     uint32_t gps_failures = 0;
+    double accuracy_value = 0; // in meters
 
     double lat_value = 0;
     double lon_value = 0;
@@ -29,6 +32,8 @@ private:
     uint32_t satellites_value = 0;
 
     double speed = 0; // m/s
+
+    double hdop_value = 0; // Horizontal Dilution of Precision
 
     uint8_t day_value;
     uint8_t month_value;
@@ -44,6 +49,11 @@ public:
         this->modem = modem;
     }
     ~EBikeGPS() {}
+
+    double accuracy()
+    {
+        return this->accuracy_value;
+    }
 
     double lat()
     {
@@ -71,6 +81,11 @@ public:
     double speed_mps()
     {
         return this->speed;
+    }
+
+    double hdop()
+    {
+        return this->hdop_value;
     }
 
     uint8_t day()
@@ -145,6 +160,8 @@ public:
             EBIKE_DBG("Couldn't get GSM location, retrying...");
         }
 
+        this->accuracy_value = (double)accuracy;
+        this->hdop_value = 0.0; // GSM location does not provide HDOP
         this->lat_value = (double)lat;
         this->lon_value = (double)lon;
         this->year_value = (uint16_t)year;
@@ -171,12 +188,14 @@ public:
         }
         this->gps_failures = 0;
 
+        this->accuracy_value = info.PDOP * UERE;
         this->altitude_value = info.altitude;
         this->lat_value = info.latitude;
         this->lon_value = info.longitude;
         this->satellites_value = info.gps_satellite_num + info.beidou_satellite_num +
                                  info.glonass_satellite_num + info.galileo_satellite_num;
-        this->speed = info.speed; // m/s
+        this->speed = info.speed;     // m/s
+        this->hdop_value = info.HDOP; // Horizontal Dilution of Precision
         this->day_value = info.day;
         this->month_value = info.month;
         this->year_value = info.year;
@@ -203,7 +222,8 @@ public:
         char post_buffer[256];
         snprintf(post_buffer, sizeof(post_buffer), POST_FORMAT,
                  client_id, this->lat(), this->lon(), this->speed_mps(),
-                 this->altitude(), battery, (battery == 0.0) ? "true" : "false");
+                 this->altitude(), this->accuracy(), this->hdop(),
+                 battery, (battery == 0.0) ? "true" : "false");
 
         // Initialize HTTPS
         modem->https_begin();
