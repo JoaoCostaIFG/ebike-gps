@@ -2,7 +2,7 @@
 
 /*
 // Replace with your phone number (to send SMS commands)
-#define MY_PHONE "+123XXXXXXXXX"
+#define MY_PHONE "+ZZXXXXXX"
 // URL of the traccar server
 #define TRACCAR_URL "https://traccar.org"
 // ID of the device in the traccar server
@@ -26,6 +26,8 @@
 // Define the serial console for debug prints, if needed
 #define TINY_GSM_DEBUG SerialMon
 // How many seconds to wait between location reports
-#define REPORT_LOCATION_RATE_SECOND 5
+#define REPORT_LOCATION_RATE_SECOND 20
 // Enable traccar from the start
-#define TRACCAR_ENABLED true
+#define TRACCAR_ENABLED false
+// The GPIO pin for accelerometer interrupt
+#define ACCEL_PIN GPIO_NUM_32
