@@ -15,4 +15,4 @@ public:
 
 bool deleteSMSByIndex(std::shared_ptr<TinyGsm> modem, int index);
 
-SMS readSms(std::shared_ptr<TinyGsm> modem);
+bool readSms(std::shared_ptr<TinyGsm> modem, SMS &sms);

@@ -28,17 +28,17 @@ bool deleteSMSByIndex(std::shared_ptr<TinyGsm> modem, int index)
     return modem->waitResponse();
 }
 
-SMS readSms(std::shared_ptr<TinyGsm> modem)
+bool readSms(std::shared_ptr<TinyGsm> modem, SMS &sms)
 {
-    SMS ret;
-
     String data = "";
     modem->sendAT("+CMGR=1"); // index 1 is the latest message
-    if (!modem->waitResponse(100, data))
+    EBIKE_NFO("Getting SMS");
+    if (!modem->waitResponse(5000, data))
     {
         EBIKE_ERR("Read SMS failed");
-        return ret;
+        return false;
     }
+    EBIKE_DBG("SMS: ", data);
 
     data.replace("\r\nOK\r\n", "");
     data.replace("\rOK\r", "");
@@ -78,11 +78,11 @@ SMS readSms(std::shared_ptr<TinyGsm> modem)
             switch (lineNumber)
             {
             case 1:
-                ret.sender = getSmsSender(data);
+                sms.sender = getSmsSender(data);
                 break;
             case 2:
-                ret.message = line;
-                ret.valid = true;
+                sms.message = line;
+                sms.valid = true;
                 break;
             default:
                 break;
@@ -91,5 +91,5 @@ SMS readSms(std::shared_ptr<TinyGsm> modem)
         }
     }
 
-    return ret;
+    return true;
 }
