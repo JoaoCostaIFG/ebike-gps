@@ -282,12 +282,16 @@ void setup()
 
 static bool processSmsCmds()
 {
-  SMS sms = readSms(modem);
+  SMS sms;
+  if (readSms(modem, sms)) {
+    // delete latest SMS if we manage to read it
+    deleteSMSByIndex(modem, 1);
+  }
   if (!sms.valid)
   {
+    // if SMS is not valid, skip it
     return false;
   }
-  deleteSMSByIndex(modem, 1);
 
   if (sms.sender != MY_PHONE)
   {
