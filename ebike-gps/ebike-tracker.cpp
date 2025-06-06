@@ -276,8 +276,7 @@ void setup()
     EBIKE_ERR("Failed to setup accelerometer.");
   }
 
-  alert("Hello, finished booting up.\n"
-        "Available commands: RESTART, GPS, BAT, TRACK, TRACKOFF, ALARM, ALARMOFF.");
+  alert("Hello, finished booting up.");
 }
 
 static bool processSmsCmds()
