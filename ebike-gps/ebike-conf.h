@@ -31,3 +31,7 @@
 #define TRACCAR_ENABLED false
 // The GPIO pin for accelerometer interrupt
 #define ACCEL_PIN GPIO_NUM_32
+// How long to go without detecting movements before enabling alarm (in ms)
+#define ALARM_ENABLE_TIMEOUT (2 * 60 * 1000) // 2m
+// How long to go without detecting movements before shutting off (in ms)
+#define DEEP_SLEEP_TIMEOUT (12 * 60 * 60 * 1000) // 12h
