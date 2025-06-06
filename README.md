@@ -37,13 +37,15 @@ On boot, the modem connects to the network and enables GPS. In this state it jus
 
 BTW, the accelerometer is a LSM6DS3 breakout board, which is connected to the Lilygo A7670E via I2C.
 
+If the tracker doesn't detect movement for 2 minutes, it enables the "alarm". If it goes 12 hours without movement, it turns off the modem and enters deep sleep. You can configure this values in the `ebike-conf.h` file.
+
 ## Compilation
 
 Just check the original readme by Lilygo [here](./README.orig.md).
 
 ## TODO
 
-- An off state where everything is in deep sleep and only wakes up on SMS commands. This would save a lot of battery, but I haven't figured out how to do it yet.
+- ~~An off state where everything is in deep sleep and only wakes up on SMS commands. This would save a lot of battery, but I haven't figured out how to do it yet~~.
 - Saving the location to the SD card when posting fails. This allows you to send it when the connection is restored.
 
 To be honest, I don't really recommend this board for a GPS tracker, as it has some quirks that make it less than ideal. For example, the battery level is not reported correctly when charging via USB.

@@ -23,6 +23,9 @@ static LSM6DS3 imu(I2C_MODE, 0x6B);
 static bool traccar_enabled = TRACCAR_ENABLED;
 static bool alarm_enabled = false;
 static bool alarm_triggered = false;
+// How long ago was the last move detection (in ms)
+// Updated during light sleep
+static uint32_t lastMovementAgo = 0;
 
 static void restart()
 {
@@ -282,7 +285,8 @@ void setup()
 static bool processSmsCmds()
 {
   SMS sms;
-  if (readSms(modem, sms)) {
+  if (readSms(modem, sms))
+  {
     // delete latest SMS if we manage to read it
     deleteSMSByIndex(modem, 1);
   }
@@ -350,27 +354,26 @@ void light_sleep_delay(uint32_t ms)
 {
   EBIKE_DBG("Entering light sleep for ", ms, " ms");
 
-  if (alarm_enabled)
-  {
-    esp_sleep_enable_ext0_wakeup(ACCEL_PIN, 1);
-  }
+  esp_sleep_enable_ext0_wakeup(ACCEL_PIN, 1);
   esp_sleep_enable_timer_wakeup(ms * 1000);
   esp_light_sleep_start();
   // Disable wakeup sources after waking up
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
-  if (alarm_enabled)
-  {
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);
-  }
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);
 
-  if (alarm_enabled)
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0)
   {
-    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-    if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0)
+    lastMovementAgo = 0;
+    if (alarm_enabled)
     {
       alarm_enabled = false; // Disable alarm after triggering
       alarm_triggered = true;
     }
+  }
+  else
+  {
+    lastMovementAgo += ms;
   }
 }
 
@@ -397,16 +400,49 @@ void modem_enter_sleep(uint32_t ms)
   light_sleep_delay(500);
 }
 
+void deep_sleep_until_movement()
+{
+  EBIKE_NFO("Entering deep sleep until movement is detected");
+  Serial.flush();
+
+  modem->poweroff();
+#ifdef BOARD_POWERON_PIN
+  // Turn on DC boost to power off the modem
+  digitalWrite(BOARD_POWERON_PIN, LOW);
+#endif
+#ifdef MODEM_RESET_PIN
+  // Keep it low during the sleep period. If the module uses GPIO5 as reset,
+  // there will be a pulse when waking up from sleep that will cause the module to start directly.
+  // https://github.com/Xinyuan-LilyGO/LilyGO-T-A76XX/issues/85
+  digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
+  gpio_hold_en((gpio_num_t)MODEM_RESET_PIN);
+  gpio_deep_sleep_hold_en();
+#endif
+
+  esp_sleep_enable_ext0_wakeup(ACCEL_PIN, 1);
+  esp_deep_sleep_start();
+}
+
 void loop()
 {
-  // Check if the modem is responsive, otherwise reboot
   bool is_power_on = modem->testAT(3000);
   if (!is_power_on)
   {
     restart();
   }
 
-  if (alarm_enabled && alarm_triggered)
+  if (lastMovementAgo >= DEEP_SLEEP_TIMEOUT)
+  {
+    alert("No movement detected for a while. Turning off...");
+    deep_sleep_until_movement();
+  }
+  else if (lastMovementAgo >= ALARM_ENABLE_TIMEOUT && !alarm_enabled)
+  {
+    alert("Enabled alarm due to timeout.");
+    alarm_enabled = true;
+  }
+
+  if (alarm_triggered)
   {
     // If the alarm is enabled and the accelerometer detects a tap, send an SMS
     EBIKE_NFO("Alarm triggered.");
