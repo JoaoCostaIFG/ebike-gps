@@ -14,7 +14,7 @@
 */
 #include "ebike-conf-priv.h"
 
-#define EBIKE_DEBUG_BUILD
+//#define EBIKE_DEBUG_BUILD
 
 // See all AT commands
 // #define DUMP_AT_COMMANDS

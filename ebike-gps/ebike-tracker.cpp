@@ -302,6 +302,9 @@ static bool processSmsCmds()
     return true;
   }
 
+  // valid user interactions reset the sleep time
+  lastMovementAgo = 0;
+
   sms.message.toUpperCase();
   if (sms.message == "RESTART")
   {
